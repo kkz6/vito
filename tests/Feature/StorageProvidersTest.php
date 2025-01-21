@@ -3,10 +3,15 @@
 namespace Tests\Feature;
 
 use App\Enums\StorageProvider;
+use App\Facades\FTP;
 use App\Models\Backup;
 use App\Models\Database;
+use App\Models\StorageProvider as StorageProviderModel;
+use App\Web\Pages\Settings\StorageProviders\Index;
+use App\Web\Pages\Settings\StorageProviders\Widgets\StorageProvidersList;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 class StorageProvidersTest extends TestCase
@@ -24,8 +29,17 @@ class StorageProvidersTest extends TestCase
             Http::fake();
         }
 
-        $this->post(route('settings.storage-providers.connect'), $input)
-            ->assertSessionDoesntHaveErrors();
+        if ($input['provider'] === StorageProvider::FTP) {
+            FTP::fake();
+        }
+
+        Livewire::test(Index::class)
+            ->callAction('connect', $input)
+            ->assertSuccessful();
+
+        if ($input['provider'] === StorageProvider::FTP) {
+            FTP::assertConnected($input['host']);
+        }
 
         $this->assertDatabaseHas('storage_providers', [
             'provider' => $input['provider'],
@@ -38,12 +52,27 @@ class StorageProvidersTest extends TestCase
     {
         $this->actingAs($this->user);
 
-        $provider = \App\Models\StorageProvider::factory()->create([
+        /** @var StorageProviderModel $provider */
+        $provider = StorageProviderModel::factory()->create([
             'user_id' => $this->user->id,
             'provider' => StorageProvider::DROPBOX,
         ]);
 
-        $this->get(route('settings.storage-providers'))
+        $this->get(Index::getUrl())
+            ->assertSuccessful()
+            ->assertSee($provider->profile);
+
+        /** @var StorageProviderModel $provider */
+        $provider = StorageProviderModel::factory()->create([
+            'user_id' => $this->user->id,
+            'provider' => StorageProvider::S3,
+        ]);
+
+        $this->get(Index::getUrl())
+            ->assertSuccessful()
+            ->assertSee($provider->profile);
+
+        $this->get(Index::getUrl())
             ->assertSuccessful()
             ->assertSee($provider->profile);
     }
@@ -52,12 +81,13 @@ class StorageProvidersTest extends TestCase
     {
         $this->actingAs($this->user);
 
-        $provider = \App\Models\StorageProvider::factory()->create([
+        $provider = StorageProviderModel::factory()->create([
             'user_id' => $this->user->id,
         ]);
 
-        $this->delete(route('settings.storage-providers.delete', $provider->id))
-            ->assertSessionDoesntHaveErrors();
+        Livewire::test(StorageProvidersList::class)
+            ->callTableAction('delete', $provider->id)
+            ->assertSuccessful();
 
         $this->assertDatabaseMissing('storage_providers', [
             'id' => $provider->id,
@@ -72,7 +102,7 @@ class StorageProvidersTest extends TestCase
             'server_id' => $this->server,
         ]);
 
-        $provider = \App\Models\StorageProvider::factory()->create([
+        $provider = StorageProviderModel::factory()->create([
             'user_id' => $this->user->id,
         ]);
 
@@ -82,10 +112,9 @@ class StorageProvidersTest extends TestCase
             'storage_id' => $provider->id,
         ]);
 
-        $this->delete(route('settings.storage-providers.delete', $provider->id))
-            ->assertSessionDoesntHaveErrors()
-            ->assertSessionHas('toast.type', 'error')
-            ->assertSessionHas('toast.message', 'This storage provider is being used by a backup.');
+        Livewire::test(StorageProvidersList::class)
+            ->callTableAction('delete', $provider->id)
+            ->assertNotified('This storage provider is being used by a backup.');
 
         $this->assertDatabaseHas('storage_providers', [
             'id' => $provider->id,
@@ -113,33 +142,33 @@ class StorageProvidersTest extends TestCase
                     'global' => 1,
                 ],
             ],
-            //            [
-            //                [
-            //                    'provider' => StorageProvider::FTP,
-            //                    'name' => 'ftp-test',
-            //                    'host' => '1.2.3.4',
-            //                    'port' => '22',
-            //                    'path' => '/home/vito',
-            //                    'username' => 'username',
-            //                    'password' => 'password',
-            //                    'ssl' => 1,
-            //                    'passive' => 1,
-            //                ],
-            //            ],
-            //            [
-            //                [
-            //                    'provider' => StorageProvider::FTP,
-            //                    'name' => 'ftp-test',
-            //                    'host' => '1.2.3.4',
-            //                    'port' => '22',
-            //                    'path' => '/home/vito',
-            //                    'username' => 'username',
-            //                    'password' => 'password',
-            //                    'ssl' => 1,
-            //                    'passive' => 1,
-            //                    'global' => 1,
-            //                ],
-            //            ],
+            [
+                [
+                    'provider' => StorageProvider::FTP,
+                    'name' => 'ftp-test',
+                    'host' => '1.2.3.4',
+                    'port' => '22',
+                    'path' => '/home/vito',
+                    'username' => 'username',
+                    'password' => 'password',
+                    'ssl' => 1,
+                    'passive' => 1,
+                ],
+            ],
+            [
+                [
+                    'provider' => StorageProvider::FTP,
+                    'name' => 'ftp-test',
+                    'host' => '1.2.3.4',
+                    'port' => '22',
+                    'path' => '/home/vito',
+                    'username' => 'username',
+                    'password' => 'password',
+                    'ssl' => 1,
+                    'passive' => 1,
+                    'global' => 1,
+                ],
+            ],
             [
                 [
                     'provider' => StorageProvider::DROPBOX,

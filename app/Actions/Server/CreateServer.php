@@ -5,18 +5,18 @@ namespace App\Actions\Server;
 use App\Enums\FirewallRuleStatus;
 use App\Enums\ServerProvider;
 use App\Enums\ServerStatus;
-use App\Exceptions\ServerProviderError;
+use App\Enums\ServerType;
 use App\Facades\Notifier;
+use App\Models\Project;
 use App\Models\Server;
 use App\Models\User;
 use App\Notifications\ServerInstallationFailed;
 use App\Notifications\ServerInstallationSucceed;
 use App\ValidationRules\RestrictedIPAddressesRule;
 use Exception;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -24,22 +24,17 @@ use Throwable;
 
 class CreateServer
 {
-    /**
-     * @throws Throwable
-     */
-    public function create(User $creator, array $input): Server
+    public function create(User $creator, Project $project, array $input): Server
     {
-        $this->validateInputs($input);
-
         $server = new Server([
-            'project_id' => $creator->currentProject->id,
+            'project_id' => $project->id,
             'user_id' => $creator->id,
             'name' => $input['name'],
             'ssh_user' => config('core.server_providers_default_user')[$input['provider']][$input['os']],
             'ip' => $input['ip'] ?? '',
             'port' => $input['port'] ?? 22,
             'os' => $input['os'],
-            'type' => $input['type'],
+            'type' => ServerType::REGULAR,
             'provider' => $input['provider'],
             'authentication' => [
                 'user' => config('core.ssh_user'),
@@ -50,18 +45,13 @@ class CreateServer
             'progress_step' => 'Initializing',
         ]);
 
-        DB::beginTransaction();
         try {
             if ($server->provider != 'custom') {
                 $server->provider_id = $input['server_provider'];
             }
 
-            // validate type
-            $this->validateType($server, $input);
             $server->type_data = $server->type()->data($input);
 
-            // validate provider
-            $this->validateProvider($server, $input);
             $server->provider_data = $server->provider()->data($input);
 
             // save
@@ -79,18 +69,13 @@ class CreateServer
             // install server
             $this->install($server);
 
-            DB::commit();
-
             return $server;
         } catch (Exception $e) {
-            $server->provider()->delete();
-            DB::rollBack();
-            if ($e instanceof ServerProviderError) {
-                throw ValidationException::withMessages([
-                    'provider' => __('Provider Error: ').$e->getMessage(),
-                ]);
-            }
-            throw $e;
+            $server->delete();
+
+            throw ValidationException::withMessages([
+                'provider' => $e->getMessage(),
+            ]);
         }
     }
 
@@ -126,62 +111,85 @@ class CreateServer
         $bus->onConnection('ssh')->dispatch();
     }
 
-    /**
-     * @throws ValidationException
-     */
-    private function validateInputs(array $input): void
+    public static function rules(Project $project, array $input): array
     {
         $rules = [
-            'provider' => 'required|in:'.implode(',', config('core.server_providers')),
-            'name' => 'required',
-            'os' => 'required|in:'.implode(',', config('core.operating_systems')),
-            'type' => [
+            'provider' => [
                 'required',
-                Rule::in(config('core.server_types')),
+                Rule::in(config('core.server_providers')),
+            ],
+            'name' => [
+                'required',
+            ],
+            'os' => [
+                'required',
+                Rule::in(config('core.operating_systems')),
+            ],
+            'server_provider' => [
+                Rule::when(function () use ($input) {
+                    return isset($input['provider']) && $input['provider'] != ServerProvider::CUSTOM;
+                }, [
+                    'required',
+                    Rule::exists('server_providers', 'id')->where(function (Builder $query) use ($project) {
+                        $query->where('project_id', $project->id)
+                            ->orWhereNull('project_id');
+                    }),
+                ]),
+            ],
+            'ip' => [
+                Rule::when(function () use ($input) {
+                    return isset($input['provider']) && $input['provider'] == ServerProvider::CUSTOM;
+                }, [
+                    'required',
+                    new RestrictedIPAddressesRule,
+                ]),
+            ],
+            'port' => [
+                Rule::when(function () use ($input) {
+                    return isset($input['provider']) && $input['provider'] == ServerProvider::CUSTOM;
+                }, [
+                    'required',
+                    'numeric',
+                    'min:1',
+                    'max:65535',
+                ]),
             ],
         ];
 
-        Validator::make($input, $rules)->validate();
+        return array_merge($rules, self::typeRules($input), self::providerRules($input));
+    }
 
-        if ($input['provider'] != 'custom') {
-            $rules['server_provider'] = 'required|exists:server_providers,id,user_id,'.auth()->user()->id;
+    private static function typeRules(array $input): array
+    {
+        if (! isset($input['type']) || ! in_array($input['type'], config('core.server_types'))) {
+            return [];
         }
 
-        if ($input['provider'] == 'custom') {
-            $rules['ip'] = [
-                'required',
-                new RestrictedIPAddressesRule(),
-            ];
-            $rules['port'] = [
-                'required',
-                'numeric',
-                'min:1',
-                'max:65535',
-            ];
+        $server = new Server(['type' => $input['type']]);
+
+        return $server->type()->createRules($input);
+    }
+
+    private static function providerRules(array $input): array
+    {
+        if (
+            ! isset($input['provider']) ||
+            ! isset($input['server_provider']) ||
+            ! in_array($input['provider'], config('core.server_providers')) ||
+            $input['provider'] == ServerProvider::CUSTOM
+        ) {
+            return [];
         }
 
-        Validator::make($input, $rules)->validate();
+        $server = new Server([
+            'provider' => $input['provider'],
+            'provider_id' => $input['server_provider'],
+        ]);
+
+        return $server->provider()->createRules($input);
     }
 
-    /**
-     * @throws ValidationException
-     */
-    private function validateType(Server $server, array $input): void
-    {
-        Validator::make($input, $server->type()->createRules($input))
-            ->validate();
-    }
-
-    /**
-     * @throws ValidationException
-     */
-    private function validateProvider(Server $server, array $input): void
-    {
-        Validator::make($input, $server->provider()->createRules($input))
-            ->validate();
-    }
-
-    private function createFirewallRules(Server $server): void
+    public function createFirewallRules(Server $server): void
     {
         $server->firewallRules()->createMany([
             [

@@ -2,9 +2,9 @@
 
 namespace App\Actions\StorageProvider;
 
+use App\Models\Project;
 use App\Models\StorageProvider;
 use App\Models\User;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -13,18 +13,14 @@ class CreateStorageProvider
     /**
      * @throws ValidationException
      */
-    public function create(User $user, array $input): void
+    public function create(User $user, Project $project, array $input): StorageProvider
     {
-        $this->validate($user, $input);
-
         $storageProvider = new StorageProvider([
             'user_id' => $user->id,
             'provider' => $input['provider'],
             'profile' => $input['name'],
-            'project_id' => isset($input['global']) && $input['global'] ? null : $user->current_project_id,
+            'project_id' => isset($input['global']) && $input['global'] ? null : $project->id,
         ]);
-
-        $this->validateProvider($input, $storageProvider->provider()->validationRules());
 
         $storageProvider->credentials = $storageProvider->provider()->credentialData($input);
 
@@ -41,24 +37,27 @@ class CreateStorageProvider
         }
 
         $storageProvider->save();
+
+        return $storageProvider;
     }
 
-    private function validate(User $user, array $input): void
+    public static function rules(array $input): array
     {
-        Validator::make($input, [
+        $rules = [
             'provider' => [
                 'required',
                 Rule::in(config('core.storage_providers')),
             ],
             'name' => [
                 'required',
-                Rule::unique('storage_providers', 'profile')->where('user_id', $user->id),
             ],
-        ])->validate();
-    }
+        ];
 
-    private function validateProvider(array $input, array $rules): void
-    {
-        Validator::make($input, $rules)->validate();
+        if (isset($input['provider'])) {
+            $provider = (new StorageProvider(['provider' => $input['provider']]))->provider();
+            $rules = array_merge($rules, $provider->validationRules());
+        }
+
+        return $rules;
     }
 }

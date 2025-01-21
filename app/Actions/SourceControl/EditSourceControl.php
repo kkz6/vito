@@ -2,53 +2,47 @@
 
 namespace App\Actions\SourceControl;
 
+use App\Models\Project;
 use App\Models\SourceControl;
-use App\Models\User;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 class EditSourceControl
 {
-    public function edit(SourceControl $sourceControl, User $user, array $input): void
+    public function edit(SourceControl $sourceControl, Project $project, array $input): SourceControl
     {
-        $this->validate($input);
-
         $sourceControl->profile = $input['name'];
         $sourceControl->url = $input['url'] ?? null;
-        $sourceControl->project_id = isset($input['global']) && $input['global'] ? null : $user->current_project_id;
+        $sourceControl->project_id = isset($input['global']) && $input['global'] ? null : $project->id;
 
-        $this->validateProvider($sourceControl, $input);
-
-        $sourceControl->provider_data = $sourceControl->provider()->createData($input);
+        $sourceControl->provider_data = $sourceControl->provider()->editData($input);
 
         if (! $sourceControl->provider()->connect()) {
             throw ValidationException::withMessages([
-                'token' => __('Cannot connect to :provider or invalid token!', ['provider' => $sourceControl->provider]
-                ),
+                'token' => __('Cannot connect to :provider or invalid token!', ['provider' => $sourceControl->provider]),
             ]);
         }
 
         $sourceControl->save();
+
+        return $sourceControl;
     }
 
-    /**
-     * @throws ValidationException
-     */
-    private function validate(array $input): void
+    public static function rules(SourceControl $sourceControl, array $input): array
     {
         $rules = [
             'name' => [
                 'required',
             ],
         ];
-        Validator::make($input, $rules)->validate();
+
+        return array_merge($rules, static::providerRules($sourceControl, $input));
     }
 
     /**
      * @throws ValidationException
      */
-    private function validateProvider(SourceControl $sourceControl, array $input): void
+    private static function providerRules(SourceControl $sourceControl, array $input): array
     {
-        Validator::make($input, $sourceControl->provider()->createRules($input))->validate();
+        return $sourceControl->provider()->editRules($input);
     }
 }

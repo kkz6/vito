@@ -17,8 +17,12 @@ class TelegramTest extends TestCase
         ]));
 
         $this->assertSame([
-            'bot_token' => 'required|string',
-            'chat_id' => 'required',
+            'bot_token' => [
+                'required',
+            ],
+            'chat_id' => [
+                'required',
+            ],
         ], $provider->createRules([]));
     }
 
@@ -92,7 +96,7 @@ class TelegramTest extends TestCase
 
         Http::fake();
 
-        $provider->send($channel, new TestNotification());
+        $provider->send($channel, new TestNotification);
 
         Http::assertSent(function (Request $request) {
             if ($request->url() === 'https://api.telegram.org/botxxxxx/sendMessage') {

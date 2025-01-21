@@ -14,27 +14,23 @@ use App\Notifications\SiteInstallationSucceed;
 use App\ValidationRules\DomainRule;
 use Exception;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class CreateSite
 {
-    /**
-     * @throws SourceControlIsNotConnected
-     */
     public function create(Server $server, array $input): Site
     {
-        $this->validateInputs($server, $input);
-
         DB::beginTransaction();
         try {
+            $user = $input['user'] ?? $server->getSshUser();
             $site = new Site([
                 'server_id' => $server->id,
                 'type' => $input['type'],
                 'domain' => $input['domain'],
                 'aliases' => $input['aliases'] ?? [],
-                'path' => '/home/'.$server->getSshUser().'/'.$input['domain'],
+                'user' => $user,
+                'path' => '/home/'.$user.'/'.$input['domain'],
                 'status' => SiteStatus::INSTALLING,
             ]);
 
@@ -43,8 +39,8 @@ class CreateSite
 
             // check has access to repository
             try {
-                if ($site->sourceControl()) {
-                    $site->sourceControl()->getRepo($site->repository);
+                if ($site->sourceControl) {
+                    $site->sourceControl?->getRepo($site->repository);
                 }
             } catch (SourceControlIsNotConnected) {
                 throw ValidationException::withMessages([
@@ -59,9 +55,6 @@ class CreateSite
                     'repository' => 'Repository not found',
                 ]);
             }
-
-            // validate type
-            $this->validateType($site, $input);
 
             // set type data
             $site->type_data = $site->type()->data($input);
@@ -94,14 +87,13 @@ class CreateSite
             return $site;
         } catch (Exception $e) {
             DB::rollBack();
-            throw $e;
+            throw ValidationException::withMessages([
+                'type' => $e->getMessage(),
+            ]);
         }
     }
 
-    /**
-     * @throws ValidationException
-     */
-    private function validateInputs(Server $server, array $input): void
+    public static function rules(Server $server, array $input): array
     {
         $rules = [
             'type' => [
@@ -110,26 +102,37 @@ class CreateSite
             ],
             'domain' => [
                 'required',
-                new DomainRule(),
+                new DomainRule,
                 Rule::unique('sites', 'domain')->where(function ($query) use ($server) {
                     return $query->where('server_id', $server->id);
                 }),
             ],
             'aliases.*' => [
-                new DomainRule(),
+                new DomainRule,
+            ],
+            'user' => [
+                'regex:/^[a-z_][a-z0-9_-]*[a-z0-9]$/',
+                'min:3',
+                'max:32',
+                'unique:sites,user',
+                Rule::notIn($server->getSshUsers()),
             ],
         ];
 
-        Validator::make($input, $rules)->validate();
+        return array_merge($rules, self::typeRules($server, $input));
     }
 
-    /**
-     * @throws ValidationException
-     */
-    private function validateType(Site $site, array $input): void
+    private static function typeRules(Server $server, array $input): array
     {
-        $rules = $site->type()->createRules($input);
+        if (! isset($input['type']) || ! in_array($input['type'], config('core.site_types'))) {
+            return [];
+        }
 
-        Validator::make($input, $rules)->validate();
+        $site = new Site([
+            'server_id' => $server->id,
+            'type' => $input['type']]
+        );
+
+        return $site->type()->createRules($input);
     }
 }

@@ -58,7 +58,8 @@ class StorageProvider extends AbstractModel
     public static function getByProjectId(int $projectId): Builder
     {
         return self::query()
-            ->where('project_id', $projectId)
-            ->orWhereNull('project_id');
+            ->where(function (Builder $query) use ($projectId) {
+                $query->where('project_id', $projectId)->orWhereNull('project_id');
+            });
     }
 }

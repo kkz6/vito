@@ -23,7 +23,7 @@ fi
 # Check if APP_KEY starts with 'base64:'
 if [[ $APP_KEY == base64:* ]]; then
     # Remove 'base64:' prefix and decode the base64 string
-    decoded_key=$(echo "${APP_KEY:7}" | base64 --decode 2>/dev/null)
+    decoded_key=$(echo "${APP_KEY:7}" | base64 --decode 2> /dev/null)
 
     # Check if decoding was successful
     if [ $? -ne 0 ]; then
@@ -61,12 +61,9 @@ service php8.2-fpm start
 service nginx start
 
 php /var/www/html/artisan migrate --force
-php /var/www/html/artisan config:clear
-php /var/www/html/artisan config:cache
-php /var/www/html/artisan route:clear
-php /var/www/html/artisan route:cache
-php /var/www/html/artisan view:clear
-php /var/www/html/artisan view:cache
+php /var/www/html/artisan optimize:clear
+php /var/www/html/artisan optimize
+php /var/www/html/artisan icons:cache
 
 php /var/www/html/artisan user:create "$NAME" "$EMAIL" "$PASSWORD"
 

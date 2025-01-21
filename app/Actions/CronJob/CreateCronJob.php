@@ -6,15 +6,12 @@ use App\Enums\CronjobStatus;
 use App\Models\CronJob;
 use App\Models\Server;
 use App\ValidationRules\CronRule;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rule;
 
 class CreateCronJob
 {
-    public function create(Server $server, array $input): void
+    public function create(Server $server, array $input): CronJob
     {
-        $this->validate($input);
-
         $cronJob = new CronJob([
             'server_id' => $server->id,
             'user' => $input['user'],
@@ -27,34 +24,33 @@ class CreateCronJob
         $server->cron()->update($cronJob->user, CronJob::crontab($server, $cronJob->user));
         $cronJob->status = CronjobStatus::READY;
         $cronJob->save();
+
+        return $cronJob;
     }
 
-    /**
-     * @throws ValidationException
-     */
-    private function validate(array $input): void
+    public static function rules(array $input, Server $server): array
     {
-        Validator::make($input, [
+        $rules = [
             'command' => [
                 'required',
             ],
             'user' => [
                 'required',
-                'in:root,'.config('core.ssh_user'),
+                Rule::in($server->getSshUsers()),
             ],
             'frequency' => [
                 'required',
                 new CronRule(acceptCustom: true),
             ],
-        ])->validate();
+        ];
 
-        if ($input['frequency'] == 'custom') {
-            Validator::make($input, [
-                'custom' => [
-                    'required',
-                    new CronRule(),
-                ],
-            ])->validate();
+        if (isset($input['frequency']) && $input['frequency'] == 'custom') {
+            $rules['custom'] = [
+                'required',
+                new CronRule,
+            ];
         }
+
+        return $rules;
     }
 }

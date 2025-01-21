@@ -3,18 +3,22 @@
 namespace App\Models;
 
 use App\Actions\Server\CheckConnection;
+use App\Enums\ServerStatus;
 use App\Enums\ServiceStatus;
 use App\Facades\SSH;
 use App\ServerTypes\ServerType;
 use App\SSH\Cron\Cron;
 use App\SSH\OS\OS;
 use App\SSH\Systemd\Systemd;
+use App\Support\Testing\SSHFake;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -55,6 +59,7 @@ use Illuminate\Support\Str;
  * @property Backup[] $backups
  * @property Queue[] $daemons
  * @property SshKey[] $sshKeys
+ * @property Tag[] $tags
  * @property string $hostname
  * @property int $updates
  * @property Carbon $last_update_check
@@ -113,28 +118,62 @@ class Server extends AbstractModel
         parent::boot();
 
         static::deleting(function (Server $server) {
-            $server->sites()->each(function (Site $site) {
-                $site->delete();
-            });
-            $server->provider()->delete();
-            $server->logs()->each(function (ServerLog $log) {
-                $log->delete();
-            });
-            $server->services()->delete();
-            $server->databases()->delete();
-            $server->databaseUsers()->delete();
-            $server->firewallRules()->delete();
-            $server->cronJobs()->delete();
-            $server->queues()->delete();
-            $server->daemons()->delete();
-            $server->sshKeys()->detach();
-            if (File::exists($server->sshKey()['public_key_path'])) {
-                File::delete($server->sshKey()['public_key_path']);
-            }
-            if (File::exists($server->sshKey()['private_key_path'])) {
-                File::delete($server->sshKey()['private_key_path']);
+            DB::beginTransaction();
+            try {
+                $server->sites()->each(function (Site $site) {
+                    $site->queues()->delete();
+                    $site->ssls()->delete();
+                    $site->deployments()->delete();
+                    $site->deploymentScript()->delete();
+                });
+                $server->sites()->delete();
+                $server->logs()->each(function (ServerLog $log) {
+                    $log->delete();
+                });
+                $server->services()->delete();
+                $server->databases()->delete();
+                $server->databaseUsers()->delete();
+                $server->firewallRules()->delete();
+                $server->cronJobs()->delete();
+                $server->queues()->delete();
+                $server->daemons()->delete();
+                $server->sshKeys()->detach();
+                if (File::exists($server->sshKey()['public_key_path'])) {
+                    File::delete($server->sshKey()['public_key_path']);
+                }
+                if (File::exists($server->sshKey()['private_key_path'])) {
+                    File::delete($server->sshKey()['private_key_path']);
+                }
+                $server->provider()->delete();
+                DB::commit();
+            } catch (\Throwable $e) {
+                DB::rollBack();
+                throw $e;
             }
         });
+    }
+
+    public static array $statusColors = [
+        ServerStatus::READY => 'success',
+        ServerStatus::INSTALLING => 'warning',
+        ServerStatus::DISCONNECTED => 'gray',
+        ServerStatus::INSTALLATION_FAILED => 'danger',
+        ServerStatus::UPDATING => 'warning',
+    ];
+
+    public function isReady(): bool
+    {
+        return $this->status === ServerStatus::READY;
+    }
+
+    public function isInstalling(): bool
+    {
+        return in_array($this->status, [ServerStatus::INSTALLING, ServerStatus::INSTALLATION_FAILED]);
+    }
+
+    public function isInstallationFailed(): bool
+    {
+        return $this->status === ServerStatus::INSTALLATION_FAILED;
     }
 
     public function project(): BelongsTo
@@ -214,6 +253,11 @@ class Server extends AbstractModel
             ->withTimestamps();
     }
 
+    public function tags(): MorphToMany
+    {
+        return $this->morphToMany(Tag::class, 'taggable');
+    }
+
     public function getSshUser(): string
     {
         if ($this->ssh_user) {
@@ -221,6 +265,15 @@ class Server extends AbstractModel
         }
 
         return config('core.ssh_user');
+    }
+
+    public function getSshUsers(): array
+    {
+        $users = ['root', $this->getSshUser()];
+        $isolatedSites = $this->sites()->pluck('user')->toArray();
+        $users = array_merge($users, $isolatedSites);
+
+        return array_unique($users);
     }
 
     public function service($type, $version = null): ?Service
@@ -262,7 +315,7 @@ class Server extends AbstractModel
         return $service;
     }
 
-    public function ssh(?string $user = null): mixed
+    public function ssh(?string $user = null): \App\Helpers\SSH|SSHFake
     {
         return SSH::init($this, $user);
     }
@@ -273,6 +326,17 @@ class Server extends AbstractModel
         $phps = $this->services()->where('type', 'php')->get(['version']);
         foreach ($phps as $php) {
             $versions[] = $php->version;
+        }
+
+        return $versions;
+    }
+
+    public function installedNodejsVersions(): array
+    {
+        $versions = [];
+        $nodes = $this->services()->where('type', 'nodejs')->get(['version']);
+        foreach ($nodes as $node) {
+            $versions[] = $node->version;
         }
 
         return $versions;
@@ -289,7 +353,7 @@ class Server extends AbstractModel
     {
         $providerClass = config('core.server_providers_class')[$this->provider];
 
-        return new $providerClass($this);
+        return new $providerClass($this->serverProvider, $this);
     }
 
     public function webserver(?string $version = null): ?Service
@@ -335,6 +399,15 @@ class Server extends AbstractModel
         }
 
         return $this->service('php', $version);
+    }
+
+    public function nodejs(?string $version = null): ?Service
+    {
+        if (! $version) {
+            return $this->defaultService('nodejs');
+        }
+
+        return $this->service('nodejs', $version);
     }
 
     public function memoryDatabase(?string $version = null): ?Service
@@ -397,5 +470,14 @@ class Server extends AbstractModel
         $this->updates = $this->os()->availableUpdates();
         $this->last_update_check = now();
         $this->save();
+    }
+
+    public function getAvailableUpdatesAttribute(?int $value): int
+    {
+        if (! $value) {
+            return 0;
+        }
+
+        return $value;
     }
 }

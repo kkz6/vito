@@ -2,11 +2,15 @@
 
 namespace App\Models;
 
+use Exception;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 /**
  * @property int $server_id
@@ -42,12 +46,14 @@ class ServerLog extends AbstractModel
         parent::boot();
 
         static::deleting(function (ServerLog $log) {
-            try {
-                if (Storage::disk($log->disk)->exists($log->name)) {
-                    Storage::disk($log->disk)->delete($log->name);
+            if ($log->is_remote) {
+                try {
+                    if (Storage::disk($log->disk)->exists($log->name)) {
+                        Storage::disk($log->disk)->delete($log->name);
+                    }
+                } catch (Exception $e) {
+                    Log::error($e->getMessage(), ['exception' => $e]);
                 }
-            } catch (\Exception $e) {
-                Log::error($e->getMessage(), ['exception' => $e]);
             }
         });
     }
@@ -65,6 +71,31 @@ class ServerLog extends AbstractModel
     public function site(): BelongsTo
     {
         return $this->belongsTo(Site::class);
+    }
+
+    /**
+     * @throws Throwable
+     */
+    public function download(): StreamedResponse
+    {
+        if ($this->is_remote) {
+            $tmpName = $this->server->id.'-'.strtotime('now').'-'.$this->type.'.log';
+            $tmpPath = Storage::disk('local')->path($tmpName);
+
+            $this->server->ssh()->download($tmpPath, $this->name);
+
+            dispatch(function () use ($tmpPath) {
+                if (File::exists($tmpPath)) {
+                    File::delete($tmpPath);
+                }
+            })
+                ->delay(now()->addMinutes(5))
+                ->onQueue('default');
+
+            return Storage::disk('local')->download($tmpName, str($this->name)->afterLast('/'));
+        }
+
+        return Storage::disk($this->disk)->download($this->name);
     }
 
     public static function getRemote($query, bool $active = true, ?Site $site = null)
@@ -90,20 +121,26 @@ class ServerLog extends AbstractModel
         }
     }
 
-    public function getContent(): ?string
+    public function getContent($lines = null): ?string
     {
         if ($this->is_remote) {
-            return $this->server->os()->tail($this->name, 150);
+            return $this->server->os()->tail($this->name, $lines ?? 150);
         }
 
         if (Storage::disk($this->disk)->exists($this->name)) {
-            return Storage::disk($this->disk)->get($this->name);
+            if ($lines) {
+                return tail(Storage::disk($this->disk)->path($this->name), $lines);
+            }
+
+            $content = Storage::disk($this->disk)->get($this->name);
+
+            return $content ?? 'Empty log file!';
         }
 
-        return '';
+        return "Log file doesn't exist!";
     }
 
-    public static function log(Server $server, string $type, string $content, ?Site $site = null): void
+    public static function log(Server $server, string $type, string $content, ?Site $site = null): static
     {
         $log = new static([
             'server_id' => $server->id,
@@ -114,6 +151,8 @@ class ServerLog extends AbstractModel
         ]);
         $log->save();
         $log->write($content);
+
+        return $log;
     }
 
     public static function make(Server $server, string $type): ServerLog

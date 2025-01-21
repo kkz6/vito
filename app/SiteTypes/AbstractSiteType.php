@@ -2,7 +2,7 @@
 
 namespace App\SiteTypes;
 
-use App\Exceptions\SourceControlIsNotConnected;
+use App\Exceptions\FailedToDeployGitKey;
 use App\Models\Site;
 
 abstract class AbstractSiteType implements SiteType
@@ -21,15 +21,15 @@ abstract class AbstractSiteType implements SiteType
     }
 
     /**
-     * @throws SourceControlIsNotConnected
+     * @throws FailedToDeployGitKey
      */
     protected function deployKey(): void
     {
         $os = $this->site->server->os();
-        $os->generateSSHKey($this->site->getSshKeyName());
-        $this->site->ssh_key = $os->readSSHKey($this->site->getSshKeyName());
+        $os->generateSSHKey($this->site->getSshKeyName(), $this->site);
+        $this->site->ssh_key = $os->readSSHKey($this->site->getSshKeyName(), $this->site);
         $this->site->save();
-        $this->site->sourceControl()->provider()->deployKey(
+        $this->site->sourceControl?->provider()?->deployKey(
             $this->site->domain.'-key-'.$this->site->id,
             $this->site->repository,
             $this->site->ssh_key

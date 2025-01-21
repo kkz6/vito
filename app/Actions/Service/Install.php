@@ -12,7 +12,7 @@ class Install
 {
     public function install(Server $server, array $input): Service
     {
-        $this->validate($server, $input);
+        $input['type'] = config('core.service_types')[$input['name']];
 
         $service = new Service([
             'server_id' => $server->id,
@@ -40,18 +40,21 @@ class Install
         return $service;
     }
 
-    private function validate(Server $server, array $input): void
+    public static function rules(array $input): array
     {
-        Validator::make($input, [
-            'type' => [
-                'required',
-                Rule::in(config('core.service_types')),
-            ],
+        $rules = [
             'name' => [
                 'required',
                 Rule::in(array_keys(config('core.service_types'))),
             ],
-            'version' => 'required',
-        ])->validate();
+            'version' => [
+                'required',
+            ],
+        ];
+        if (isset($input['name'])) {
+            $rules['version'][] = Rule::in(config("core.service_versions.{$input['name']}"));
+        }
+
+        return $rules;
     }
 }

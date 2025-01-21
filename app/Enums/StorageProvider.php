@@ -9,4 +9,6 @@ final class StorageProvider
     const FTP = 'ftp';
 
     const LOCAL = 'local';
+
+    const S3 = 's3';
 }

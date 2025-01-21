@@ -185,7 +185,6 @@ return [
         /*
          * Package Service Providers...
          */
-        App\Providers\FortifyServiceProvider::class,
 
         /*
          * Application Service Providers...
@@ -193,6 +192,8 @@ return [
         App\Providers\AppServiceProvider::class,
         App\Providers\AuthServiceProvider::class,
         App\Providers\RouteServiceProvider::class,
+        App\Providers\WebServiceProvider::class,
+        App\Providers\DemoServiceProvider::class,
     ],
 
     /*
@@ -210,4 +211,7 @@ return [
         // 'ExampleClass' => App\Example\ExampleClass::class,
     ])->toArray(),
 
+    'version' => '2.1.0',
+
+    'demo' => env('APP_DEMO', false),
 ];

@@ -2,33 +2,31 @@
 
 namespace App\Actions\StorageProvider;
 
+use App\Models\Project;
 use App\Models\StorageProvider;
-use App\Models\User;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 class EditStorageProvider
 {
-    public function edit(StorageProvider $storageProvider, User $user, array $input): void
+    public function edit(StorageProvider $storageProvider, Project $project, array $input): StorageProvider
     {
-        $this->validate($input);
-
         $storageProvider->profile = $input['name'];
-        $storageProvider->project_id = isset($input['global']) && $input['global'] ? null : $user->current_project_id;
+        $storageProvider->project_id = isset($input['global']) && $input['global'] ? null : $project->id;
 
         $storageProvider->save();
+
+        return $storageProvider;
     }
 
     /**
      * @throws ValidationException
      */
-    private function validate(array $input): void
+    public static function rules(): array
     {
-        $rules = [
+        return [
             'name' => [
                 'required',
             ],
         ];
-        Validator::make($input, $rules)->validate();
     }
 }

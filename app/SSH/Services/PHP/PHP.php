@@ -19,6 +19,7 @@ class PHP extends AbstractService
             'version' => [
                 'required',
                 Rule::in(config('core.php_versions')),
+                Rule::notIn([\App\Enums\PHP::NONE]),
                 Rule::unique('services', 'version')
                     ->where('type', 'php')
                     ->where('server_id', $this->service->server_id),
@@ -52,6 +53,7 @@ class PHP extends AbstractService
             ]),
             'install-php-'.$this->service->version
         );
+        $this->installComposer();
         $this->service->server->os()->cleanup();
     }
 
@@ -106,6 +108,34 @@ class PHP extends AbstractService
     {
         return $this->service->server->os()->readFile(
             sprintf('/etc/php/%s/%s/php.ini', $this->service->version, $type)
+        );
+    }
+
+    public function createFpmPool(string $user, string $version, $site_id): void
+    {
+        $this->service->server->ssh()->exec(
+            $this->getScript('create-fpm-pool.sh', [
+                'user' => $user,
+                'version' => $version,
+                'config' => $this->getScript('fpm-pool.conf', [
+                    'user' => $user,
+                    'version' => $version,
+                ]),
+            ]),
+            "create-{$version}fpm-pool-{$user}",
+            $site_id
+        );
+    }
+
+    public function removeFpmPool(string $user, string $version, $site_id): void
+    {
+        $this->service->server->ssh()->exec(
+            $this->getScript('remove-fpm-pool.sh', [
+                'user' => $user,
+                'version' => $version,
+            ]),
+            "remove-{$version}fpm-pool-{$user}",
+            $site_id
         );
     }
 }

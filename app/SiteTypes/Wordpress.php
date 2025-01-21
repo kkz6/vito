@@ -35,7 +35,10 @@ class Wordpress extends AbstractSiteType
             'title' => 'required',
             'username' => 'required',
             'password' => 'required',
-            'email' => 'required|email',
+            'email' => [
+                'required',
+                'email',
+            ],
             'database' => [
                 'required',
                 Rule::unique('databases', 'name')->where(function ($query) {
@@ -81,6 +84,8 @@ class Wordpress extends AbstractSiteType
 
     public function install(): void
     {
+        $this->site->isolate();
+
         /** @var Webserver $webserver */
         $webserver = $this->site->server->webserver()->handler();
         $webserver->createVHost($this->site);

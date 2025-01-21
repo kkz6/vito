@@ -5,7 +5,6 @@ namespace App\Actions\Database;
 use App\Models\Database;
 use App\Models\DatabaseUser;
 use App\Models\Server;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -14,13 +13,11 @@ class LinkUser
     /**
      * @throws ValidationException
      */
-    public function link(DatabaseUser $databaseUser, array $input): void
+    public function link(DatabaseUser $databaseUser, array $input): DatabaseUser
     {
         if (! isset($input['databases']) || ! is_array($input['databases'])) {
             $input['databases'] = [];
         }
-
-        $this->validate($databaseUser->server, $input);
 
         $dbs = Database::query()
             ->where('server_id', $databaseUser->server_id)
@@ -46,17 +43,19 @@ class LinkUser
         );
 
         $databaseUser->save();
+
+        $databaseUser->refresh();
+
+        return $databaseUser;
     }
 
-    private function validate(Server $server, array $input): void
+    public static function rules(Server $server, array $input): array
     {
-        $rules = [
+        return [
             'databases.*' => [
-                'required',
+                'nullable',
                 Rule::exists('databases', 'name')->where('server_id', $server->id),
             ],
         ];
-
-        Validator::make($input, $rules)->validate();
     }
 }

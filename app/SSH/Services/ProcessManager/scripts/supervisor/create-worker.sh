@@ -1,10 +1,12 @@
-mkdir -p ~/.logs
+if ! sudo mkdir -p "$(dirname __log_file__)"; then
+    echo 'VITO_SSH_ERROR' && exit 1
+fi
 
-mkdir -p ~/.logs/workers
+if ! sudo touch __log_file__; then
+    echo 'VITO_SSH_ERROR' && exit 1
+fi
 
-touch ~/.logs/workers/__id__.log
-
-if ! echo '__config__' | sudo tee /etc/supervisor/conf.d/__id__.conf; then
+if ! sudo chown __user__:__user__ __log_file__; then
     echo 'VITO_SSH_ERROR' && exit 1
 fi
 

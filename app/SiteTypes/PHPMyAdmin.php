@@ -2,6 +2,8 @@
 
 namespace App\SiteTypes;
 
+use App\Enums\SiteFeature;
+use App\SSH\Services\Webserver\Webserver;
 use Illuminate\Validation\Rule;
 
 class PHPMyAdmin extends PHPSite
@@ -9,7 +11,7 @@ class PHPMyAdmin extends PHPSite
     public function supportedFeatures(): array
     {
         return [
-            //
+            SiteFeature::SSL,
         ];
     }
 
@@ -20,7 +22,7 @@ class PHPMyAdmin extends PHPSite
                 'required',
                 Rule::in($this->site->server->installedPHPVersions()),
             ],
-            'version' => 'required|string',
+            'version' => 'required',
         ];
     }
 
@@ -41,6 +43,8 @@ class PHPMyAdmin extends PHPSite
 
     public function install(): void
     {
+        $this->site->isolate();
+
         /** @var Webserver $webserver */
         $webserver = $this->site->server->webserver()->handler();
         $webserver->createVHost($this->site);

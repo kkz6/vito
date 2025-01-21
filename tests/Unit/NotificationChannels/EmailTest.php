@@ -17,7 +17,10 @@ class EmailTest extends TestCase
         ]));
 
         $this->assertSame([
-            'email' => 'required|email',
+            'email' => [
+                'required',
+                'email',
+            ],
         ], $provider->createRules([]));
     }
 
@@ -76,7 +79,7 @@ class EmailTest extends TestCase
 
         Mail::fake();
 
-        $provider->send($channel, new TestNotification());
+        $provider->send($channel, new TestNotification);
 
         Mail::assertSent(NotificationMail::class);
     }
